@@ -121,7 +121,7 @@ export default function HomeScreen({ navigation }) {
       setIsTracking(false);
       setDebugInfo('Stopped');
     } else {
-      SensorService.start(100);
+      SensorService.start(50);
       SensorService.onAccelUpdate = accel => {
         latestSensorData.current = accel;
       };
@@ -150,7 +150,7 @@ export default function HomeScreen({ navigation }) {
             timestamp: Date.now(),
           });
         }
-      }, 100);
+      }, 50);
 
       setIsTracking(true);
       setDebugInfo('Camera tracking...');
