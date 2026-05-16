@@ -204,15 +204,20 @@ class MqttService {
     }
   }
 
-  publishPose(landmarks) {
-    this._safeSend(
-      'phone/pose',
-      JSON.stringify({
-        type: 'pose_landmarks',
-        timestamp: Date.now(),
-        landmarks: landmarks,
-      }),
-    );
+  publishPose(landmarks, worldLandmarks) {
+    const payload = {
+      type: 'pose_landmarks',
+      timestamp: Date.now(),
+      landmarks: landmarks,
+    };
+    if (
+      worldLandmarks &&
+      Array.isArray(worldLandmarks) &&
+      worldLandmarks.length > 0
+    ) {
+      payload.worldLandmarks = worldLandmarks;
+    }
+    this._safeSend('phone/pose', JSON.stringify(payload));
   }
 
   publishSensors(sensorData) {

@@ -25,6 +25,7 @@ export default function HomeScreen({ navigation }) {
   const lastFpsTime = useRef(Date.now());
   const publishInterval = useRef(null);
   const latestLandmarks = useRef(null);
+  const latestWorldLandmarks = useRef(null);
   const latestSensorData = useRef(null);
   const currentActivityRef = useRef('idle');
 
@@ -37,64 +38,103 @@ export default function HomeScreen({ navigation }) {
   }, []);
 
   const onLandmark = useCallback(rawData => {
+    // ── DEBUG: log full payload structure once ──
+    // Wait for MediaPipe to actually detect a body before logging
+    const hasData = (() => {
+      try {
+        const probe =
+          typeof rawData === 'string' ? JSON.parse(rawData) : rawData;
+        const probedData = probe.nativeEvent || probe;
+        return (
+          probedData.landmarks &&
+          Array.isArray(probedData.landmarks) &&
+          probedData.landmarks.length > 0
+        );
+      } catch {
+        return false;
+      }
+    })();
+
+    if (!global.__loggedPayload && hasData) {
+      global.__loggedPayload = true;
+      try {
+        const sample =
+          typeof rawData === 'string' ? JSON.parse(rawData) : rawData;
+        const data = sample.nativeEvent || sample;
+        console.log('=== ThinkSys onLandmark payload keys ===');
+        console.log('Top-level keys:', Object.keys(data));
+        console.log(
+          'Full sample (first 2000 chars):',
+          JSON.stringify(data).slice(0, 2000),
+        );
+
+        // NEW: Inspect worldLandmarks specifically
+        if (data.worldLandmarks) {
+          console.log('=== worldLandmarks structure ===');
+          console.log('Type:', typeof data.worldLandmarks);
+          console.log('Is array:', Array.isArray(data.worldLandmarks));
+          console.log('Length:', data.worldLandmarks?.length);
+          console.log(
+            'First 3 worldLandmarks:',
+            JSON.stringify(data.worldLandmarks?.slice(0, 3)),
+          );
+          console.log(
+            'Landmark #15 (wrist):',
+            JSON.stringify(data.worldLandmarks?.[15]),
+          );
+        } else {
+          console.log('worldLandmarks NOT FOUND');
+        }
+      } catch (e) {
+        console.log('Logging error:', e.message);
+      }
+    }
+    // ── end debug ──
+
     if (!rawData) return;
     try {
       let landmarks = null;
-      if (typeof rawData === 'string') {
-        const parsed = JSON.parse(rawData);
-        if (parsed.landmarks && Array.isArray(parsed.landmarks)) {
-          landmarks = parsed.landmarks.map(lm => ({
-            x: lm.x ?? 0,
-            y: lm.y ?? 0,
-            z: lm.z ?? 0,
-            visibility: lm.visibility ?? 1,
-          }));
-        }
-      } else if (typeof rawData === 'object') {
-        const data = rawData.nativeEvent || rawData;
-        const keys = [
-          'landmarks',
-          'poseLandmarks',
-          'body',
-          'data',
-          'points',
-          'keypoints',
-          'result',
-          'results',
-          'pose',
-        ];
-        for (const key of keys) {
-          if (data[key] && Array.isArray(data[key]) && data[key].length > 0) {
-            landmarks = data[key].map(lm => ({
-              x: lm.x ?? 0,
-              y: lm.y ?? 0,
-              z: lm.z ?? 0,
-              visibility: lm.visibility ?? 1,
-            }));
-            break;
-          }
-        }
-        if (!landmarks) {
-          for (const key of Object.keys(data)) {
-            if (Array.isArray(data[key]) && data[key].length >= 10) {
-              landmarks = data[key].map(lm => ({
-                x: lm.x ?? 0,
-                y: lm.y ?? 0,
-                z: lm.z ?? 0,
-                visibility: lm.visibility ?? 1,
-              }));
-              break;
-            }
-          }
-        }
+      let worldLandmarks = null;
+
+      const data = (() => {
+        if (typeof rawData === 'string') return JSON.parse(rawData);
+        return rawData.nativeEvent || rawData;
+      })();
+
+      // Image-space landmarks (33 × {x,y,z,visibility})
+      if (
+        data.landmarks &&
+        Array.isArray(data.landmarks) &&
+        data.landmarks.length > 0
+      ) {
+        landmarks = data.landmarks.map(lm => ({
+          x: lm.x ?? 0,
+          y: lm.y ?? 0,
+          z: lm.z ?? 0,
+          visibility: lm.visibility ?? 1,
+        }));
       }
+
+      // NEW: World-space landmarks (33 × {x,y,z} in meters, hip-centered)
+      if (
+        data.worldLandmarks &&
+        Array.isArray(data.worldLandmarks) &&
+        data.worldLandmarks.length > 0
+      ) {
+        worldLandmarks = data.worldLandmarks.map(lm => ({
+          x: lm.x ?? 0,
+          y: lm.y ?? 0,
+          z: lm.z ?? 0,
+          visibility: lm.visibility ?? 1,
+        }));
+      }
+
       if (landmarks) {
         latestLandmarks.current = landmarks;
+        latestWorldLandmarks.current = worldLandmarks; // NEW
         setLandmarkCount(landmarks.length);
         setDebugInfo(
-          `✅ ${landmarks.length} pts (${landmarks[0].x.toFixed(
-            3,
-          )}, ${landmarks[0].y.toFixed(3)})`,
+          `✅ ${landmarks.length} pts${worldLandmarks ? ' + 3D world' : ''}`,
         );
       }
     } catch (e) {
@@ -132,8 +172,7 @@ export default function HomeScreen({ navigation }) {
         const sensorData = latestSensorData.current;
 
         if (landmarks && landmarks.length >= 33) {
-          // ✅ Send raw landmarks — Unity handles bone retargeting
-          MqttService.publishPose(landmarks);
+          MqttService.publishPose(landmarks, latestWorldLandmarks.current);
 
           const result = ActivityClassifier.classify(landmarks, sensorData);
           if (result.activity !== currentActivityRef.current) {
